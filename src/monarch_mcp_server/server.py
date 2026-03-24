@@ -7,7 +7,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 from mcp.server.fastmcp import FastMCP
-from monarchmoney import MonarchMoney
+from monarchmoney import MonarchMoney  # provided by monarchmoneycommunity
 from monarch_mcp_server.secure_session import secure_session
 
 # Configure logging
