@@ -67,14 +67,27 @@ def run_async_in_thread(coro):
 
 
 async def get_monarch_client() -> MonarchMoney:
-    """Get authenticated MonarchMoney client from environment token."""
+    """Get authenticated MonarchMoney client from stored token.
+    Token is refreshed locally via push_monarch_token.py — never by automated login."""
     client = cloud_session.get_authenticated_client()
     if client is not None:
         return client
     raise RuntimeError(
-        "MONARCH_TOKEN environment variable not set. "
-        "Run login_setup.py locally to get your token, then set it as a secret."
+        "No Monarch token available. Run push_monarch_token.py locally to push a fresh token."
     )
+
+
+async def with_monarch_retry(coro_fn):
+    """Execute a Monarch API call. On failure, invalidate cache and retry once with a
+    fresh token read from Table Storage (in case push_monarch_token.py ran recently)."""
+    client = await get_monarch_client()
+    try:
+        return await coro_fn(client)
+    except Exception as e:
+        logger.warning(f"Monarch API call failed ({type(e).__name__}: {e}), retrying with fresh token from Table Storage...")
+        cloud_session.invalidate()  # clear in-memory cache, re-read from Table Storage
+        client = await get_monarch_client()
+        return await coro_fn(client)
 
 
 # ----- MCP Tools (same as local server) -----
@@ -101,11 +114,7 @@ def check_auth_status() -> str:
 def get_accounts() -> str:
     """Get all financial accounts from Monarch Money."""
     try:
-        async def _get():
-            client = await get_monarch_client()
-            return await client.get_accounts()
-
-        accounts = run_async_in_thread(_get())
+        accounts = run_async_in_thread(with_monarch_retry(lambda c: c.get_accounts()))
         account_list = []
         for account in accounts.get("accounts", []):
             account_list.append({
@@ -132,8 +141,7 @@ def get_transactions(
 ) -> str:
     """Get transactions from Monarch Money."""
     try:
-        async def _get():
-            client = await get_monarch_client()
+        async def _get(client):
             filters = {}
             if start_date:
                 filters["start_date"] = start_date
@@ -143,7 +151,7 @@ def get_transactions(
                 filters["account_id"] = account_id
             return await client.get_transactions(limit=limit, offset=offset, **filters)
 
-        transactions = run_async_in_thread(_get())
+        transactions = run_async_in_thread(with_monarch_retry(_get))
         transaction_list = []
         for txn in transactions.get("allTransactions", {}).get("results", []):
             transaction_list.append({
@@ -166,11 +174,7 @@ def get_transactions(
 def get_budgets() -> str:
     """Get budget information from Monarch Money."""
     try:
-        async def _get():
-            client = await get_monarch_client()
-            return await client.get_budgets()
-
-        budgets = run_async_in_thread(_get())
+        budgets = run_async_in_thread(with_monarch_retry(lambda c: c.get_budgets()))
         budget_list = []
         for budget in budgets.get("budgets", []):
             budget_list.append({
@@ -192,8 +196,7 @@ def get_budgets() -> str:
 def get_cashflow(start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
     """Get cashflow analysis from Monarch Money."""
     try:
-        async def _get():
-            client = await get_monarch_client()
+        async def _get(client):
             filters = {}
             if start_date:
                 filters["start_date"] = start_date
@@ -201,7 +204,7 @@ def get_cashflow(start_date: Optional[str] = None, end_date: Optional[str] = Non
                 filters["end_date"] = end_date
             return await client.get_cashflow(**filters)
 
-        cashflow = run_async_in_thread(_get())
+        cashflow = run_async_in_thread(with_monarch_retry(_get))
         return json.dumps(cashflow, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to get cashflow: {e}")
@@ -212,11 +215,7 @@ def get_cashflow(start_date: Optional[str] = None, end_date: Optional[str] = Non
 def get_account_holdings(account_id: str) -> str:
     """Get investment holdings for a specific account."""
     try:
-        async def _get():
-            client = await get_monarch_client()
-            return await client.get_account_holdings(account_id)
-
-        holdings = run_async_in_thread(_get())
+        holdings = run_async_in_thread(with_monarch_retry(lambda c: c.get_account_holdings(account_id)))
         return json.dumps(holdings, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to get account holdings: {e}")
@@ -227,11 +226,7 @@ def get_account_holdings(account_id: str) -> str:
 def refresh_accounts() -> str:
     """Request account data refresh from financial institutions."""
     try:
-        async def _get():
-            client = await get_monarch_client()
-            return await client.request_accounts_refresh()
-
-        result = run_async_in_thread(_get())
+        result = run_async_in_thread(with_monarch_retry(lambda c: c.request_accounts_refresh()))
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to refresh accounts: {e}")
@@ -538,7 +533,14 @@ async def handle_mcp_request(scope: Scope, receive: Receive, send: Send) -> None
     request = Request(scope, receive, send)
 
     if not validate_bearer_token(request):
-        response = JSONResponse({"error": "unauthorized"}, status_code=401)
+        resource_metadata_url = f"{SERVER_URL}/.well-known/oauth-protected-resource"
+        response = JSONResponse(
+            {"error": "unauthorized"},
+            status_code=401,
+            headers={
+                "WWW-Authenticate": f'Bearer resource_metadata="{resource_metadata_url}"',
+            },
+        )
         await response(scope, receive, send)
         return
 
