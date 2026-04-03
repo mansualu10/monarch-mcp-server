@@ -27,6 +27,7 @@ from mcp.server.fastmcp import FastMCP
 from monarchmoney import MonarchMoney
 
 from monarch_mcp_server.cloud_session import cloud_session
+from monarch_mcp_server.investments import build_investment_exec_view
 from monarch_mcp_server.token_store import create_token_store
 
 logging.basicConfig(level=logging.INFO)
@@ -220,6 +221,26 @@ def get_account_holdings(account_id: str) -> str:
     except Exception as e:
         logger.error(f"Failed to get account holdings: {e}")
         return f"Error getting account holdings: {str(e)}"
+
+
+@mcp.tool()
+def get_investment_exec_view() -> str:
+    """Get an executive investments view with a summary card and rolled-up holdings."""
+    try:
+        accounts_raw = get_accounts()
+        accounts = json.loads(accounts_raw)
+        investment_ids = [
+            account["id"]
+            for account in accounts
+            if account.get("is_active") and account.get("type") == "brokerage"
+        ]
+        holdings_by_account = {
+            account_id: get_account_holdings(account_id) for account_id in investment_ids
+        }
+        return build_investment_exec_view(accounts_raw, holdings_by_account)
+    except Exception as e:
+        logger.error(f"Failed to build investment exec view: {e}")
+        return f"Error building investment exec view: {str(e)}"
 
 
 @mcp.tool()

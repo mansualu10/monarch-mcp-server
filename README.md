@@ -87,12 +87,11 @@ Once authenticated, use these tools directly in Claude Desktop:
 ### 📊 Account Management
 - **Get Accounts**: View all linked financial accounts with balances and institution info
 - **Get Account Holdings**: See securities and investments in investment accounts
+- **Investment Executive View**: Aggregated portfolio view with live market prices
 - **Refresh Accounts**: Request real-time data updates from financial institutions
 
 ### 💰 Transaction Access
 - **Get Transactions**: Fetch transaction data with filtering by date, account, and pagination
-- **Create Transaction**: Add new transactions to accounts
-- **Update Transaction**: Modify existing transactions (amount, description, category, date)
 
 ### 📈 Financial Analysis
 - **Get Budgets**: Access budget information including spent amounts and remaining balances
@@ -101,7 +100,7 @@ Once authenticated, use these tools directly in Claude Desktop:
 ### 🔐 Secure Authentication
 - **One-Time Setup**: Authenticate once, use for weeks/months
 - **MFA Support**: Full support for two-factor authentication
-- **Session Persistence**: No need to re-authenticate frequently
+- **Keyring Storage**: Token stored securely in the system keyring (macOS Keychain)
 - **Secure**: Credentials never pass through Claude Desktop
 
 ## 🛠️ Available Tools
@@ -115,8 +114,7 @@ Once authenticated, use these tools directly in Claude Desktop:
 | `get_budgets` | Get budget information | None |
 | `get_cashflow` | Get cashflow analysis | `start_date`, `end_date` |
 | `get_account_holdings` | Get investment holdings | `account_id` |
-| `create_transaction` | Create new transaction | `account_id`, `amount`, `description`, `date`, `category_id`, `merchant_name` |
-| `update_transaction` | Update existing transaction | `transaction_id`, `amount`, `description`, `category_id`, `date` |
+| `get_investment_exec_view` | Aggregated portfolio summary | None |
 | `refresh_accounts` | Request account data refresh | None |
 
 ## 📝 Usage Examples
@@ -172,23 +170,33 @@ Sessions last for weeks, but if expired:
 monarch-mcp-server/
 ├── src/monarch_mcp_server/
 │   ├── __init__.py
-│   └── server.py          # Main server implementation
-├── login_setup.py         # Authentication setup script
-├── pyproject.toml         # Project configuration
-├── requirements.txt       # Dependencies
-└── README.md             # This documentation
+│   ├── server.py          # Local MCP server (keyring auth)
+│   ├── remote_server.py   # Cloud MCP server (Azure + OAuth)
+│   ├── secure_session.py  # Keyring-based token storage
+│   ├── cloud_session.py   # Azure Table Storage session
+│   ├── investments.py     # Investment aggregation helpers
+│   └── token_store.py     # OAuth token persistence
+├── scripts/
+│   ├── daily_snapshot.py  # Daily investment email report
+│   └── run_daily_snapshot.sh
+├── tests/
+│   └── test_investments.py
+├── login_setup.py         # One-time authentication setup
+├── push_monarch_token.py  # Push token to Azure for cloud server
+├── pyproject.toml
+├── requirements.txt
+└── README.md
 ```
 
 ### Session Management
-- Sessions are stored securely in `.mm/mm_session.pickle`
-- Automatic session discovery and loading
+- Token stored securely in the system keyring (macOS Keychain)
+- Automatic session loading on server start
 - Sessions persist across Claude Desktop restarts
-- No need for frequent re-authentication
 
 ### Security Features
 - Credentials never transmitted through Claude Desktop
 - MFA/2FA fully supported
-- Session files are encrypted
+- Token stored in system keyring, not in files
 - Authentication handled in secure terminal environment
 
 ## 🙏 Acknowledgments

@@ -1,13 +1,12 @@
-"""Monarch Money MCP Server - Main server implementation."""
-
-import logging
 import asyncio
-from typing import Optional
 import json
 from concurrent.futures import ThreadPoolExecutor
+import logging
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from monarchmoney import MonarchMoney  # provided by monarchmoneycommunity
+from monarch_mcp_server.investments import build_investment_exec_view
 from monarch_mcp_server.secure_session import secure_session
 
 # Configure logging
@@ -83,8 +82,6 @@ def check_auth_status() -> str:
             return "Not authenticated. Run login_setup.py to set up credentials in the macOS Keychain."
     except Exception as e:
         return f"Error checking auth status: {str(e)}"
-
-
 
 @mcp.tool()
 def get_accounts() -> str:
@@ -264,6 +261,48 @@ def get_account_holdings(account_id: str) -> str:
         return f"Error getting account holdings: {str(e)}"
 
 
+@mcp.tool()
+def get_investment_exec_view() -> str:
+    """Get an executive investments view with a summary card and rolled-up holdings."""
+    try:
+
+        async def _get_exec_view():
+            client = await get_monarch_client()
+            accounts = await client.get_accounts()
+            account_list = []
+            investment_ids = []
+
+            for account in accounts.get("accounts", []):
+                account_info = {
+                    "id": account.get("id"),
+                    "name": account.get("displayName") or account.get("name"),
+                    "type": (account.get("type") or {}).get("name"),
+                    "balance": account.get("currentBalance"),
+                    "institution": (account.get("institution") or {}).get("name"),
+                    "is_active": account.get("isActive")
+                    if "isActive" in account
+                    else not account.get("deactivatedAt"),
+                }
+                account_list.append(account_info)
+                if account_info["is_active"] and account_info["type"] == "brokerage":
+                    investment_ids.append(account_info["id"])
+
+            holdings_pairs = await asyncio.gather(
+                *(client.get_account_holdings(account_id) for account_id in investment_ids)
+            )
+            holdings_by_account = {
+                account_id: json.dumps(payload, default=str)
+                for account_id, payload in zip(investment_ids, holdings_pairs, strict=True)
+            }
+            return build_investment_exec_view(
+                json.dumps(account_list, default=str),
+                holdings_by_account,
+            )
+
+        return run_async(_get_exec_view())
+    except Exception as e:
+        logger.error(f"Failed to build investment exec view: {e}")
+        return f"Error building investment exec view: {str(e)}"
 
 @mcp.tool()
 def refresh_accounts() -> str:
